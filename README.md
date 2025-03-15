@@ -45,3 +45,7 @@ func main() {
     })
 }
 ```
+
+Known issues:
+
+- can't import dependent packages used by function's results
