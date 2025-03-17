@@ -2,7 +2,7 @@
 
 ## Features
 
-### Generate a duck struct for a your given interface, so that you can use anonymous functions to implement interfaces on runtime.
+### 1. Generate a duck struct for a your given interface, so that you can use anonymous functions to implement interfaces at runtime.
 
 Sample usage:
 
