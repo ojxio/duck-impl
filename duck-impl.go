@@ -41,7 +41,7 @@ func main() {
 	// Parse command line flags
 	structName := flag.String("struct", "", "Name of the struct to hold the implementations of the interface")
 	interfaceName := flag.String("interface", "", "Name of the interface to implement")
-	outputFile := flag.String("outputFile", "", "Output file name")
+	outputFile := flag.String("outputFile", "ducktypes.gen.go", "Output file name")
 	debug := flag.Bool("debug", false, "Enable debug logging")
 	flag.Parse()
 
@@ -773,14 +773,14 @@ import (
 
 type _{{clean .InterfaceName}}_ struct {
 {{- range .Methods}}
-	{{.MethodName}}_ func{{formatParams .Parameters}}{{formatResults .Results}}
+	{{.MethodName|lowerInitalChar}} func{{formatParams .Parameters}}{{formatResults .Results}}
 {{- end}}
 }
 
 {{- range .Methods}}
 
 func ({{clean $.InterfaceName | toLower}}_impl _{{clean $.InterfaceName}}_) {{.MethodName}}{{formatParams .Parameters}}{{formatResults .Results}} {
-	{{if hasResults .Results}}return {{end}}{{clean $.InterfaceName | toLower}}_impl.{{.MethodName}}_{{callParams .Parameters}}
+	{{if hasResults .Results}}return {{end}}{{clean $.InterfaceName | toLower}}_impl.{{.MethodName|lowerInitalChar}}{{callParams .Parameters}}
 }
 {{- end}}
 
@@ -798,9 +798,10 @@ func (g *Generator) Generate() error {
 				}
 				return s
 			},
-			"toLower":       strings.ToLower,
-			"formatParams":  g.formatMethodParams,
-			"formatResults": g.formatMethodResults,
+			"lowerInitalChar": func(s string) string { return strings.ToLower(s[:1]) + s[1:] },
+			"toLower":         strings.ToLower,
+			"formatParams":    g.formatMethodParams,
+			"formatResults":   g.formatMethodResults,
 			"callParams": func(params []string) string {
 				if len(params) == 0 {
 					return "()"

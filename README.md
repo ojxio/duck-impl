@@ -38,13 +38,14 @@ type Foo interface {
 func main() {
     // use the name you provided by `-struct` flag
     Baz(myStruct{
-        Bar_: func() string {
+        // inital character is lowercase
+        bar: func() string {
             return "Hello, world!"
         },
     })
-    // Or, use the implicit name of the struct
+    // Or, use the implicit name of the struct -- to avoid pollute outter namespace
     Baz(_Foo_{
-        Bar_: func() string {
+        bar: func() string {
             return "Hello, world!"
         },
     })
