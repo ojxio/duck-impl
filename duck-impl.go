@@ -8,7 +8,6 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
-	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -20,12 +19,11 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-type myIO = io.ReadWriteCloser
-
 type Method struct {
 	MethodName string
-	Parameters []string // paramName paramType
-	Results    []string // resName resType
+	Parameters []string        // paramName paramType
+	Results    []string        // resName resType
+	Imports    map[string]bool // stored imports used in the method by paramType and resType
 }
 
 type Generator struct {
@@ -34,6 +32,7 @@ type Generator struct {
 	OutputFile    string
 	PackageName   string
 	Methods       []Method
+	Imports       []string // deduplicated list of imports
 }
 
 var debugLog func(string, ...interface{})
@@ -69,13 +68,23 @@ func main() {
 	}
 
 	// get current pkg
-	currentPkg := ""
+	var currentPkg string
 	// Parse the current directory to get the package name
 	if fset := token.NewFileSet(); fset != nil {
-		if pkgs, err := parser.ParseDir(fset, dir, nil, 0); err == nil {
+		pkgs, err := parser.ParseDir(fset, dir, nil, parser.PackageClauseOnly)
+		if err == nil {
 			for pkgName := range pkgs {
 				currentPkg = pkgName
-				break
+			}
+		}
+	}
+
+	imports := make([]string, 0)
+	// process imports
+	for _, method := range methods {
+		for imp, in_use := range method.Imports {
+			if in_use {
+				imports = append(imports, imp)
 			}
 		}
 	}
@@ -87,6 +96,7 @@ func main() {
 		OutputFile:    *outputFile,
 		PackageName:   currentPkg,
 		Methods:       methods,
+		Imports:       imports,
 	}
 
 	if err := generator.Generate(); err != nil {
@@ -102,210 +112,6 @@ func SplitRight(s, sep string) []string {
 	return []string{s[:idx], s[idx+len(sep):]}
 }
 
-// func findModulePath(importPath string) (string, error) {
-// 	cmd := exec.Command("go", "list", "-f", "{{.Dir}}", importPath)
-// 	output, err := cmd.Output()
-// 	if err != nil {
-// 		return "", fmt.Errorf("failed to find module path: %v", err)
-// 	}
-// 	return strings.TrimSpace(string(output)), nil
-// }
-
-// func parseInterface(dir, interfaceName string) ([]Method, string, error) {
-// 	fset := token.NewFileSet()
-
-// 	// Handle potentially qualified interface name (package.Interface)
-// 	var pkgName, intName string
-// 	parts := SplitRight(interfaceName, ".")
-// 	if len(parts) > 1 {
-// 		pkgName = parts[0]
-// 		intName = parts[len(parts)-1] // Use the last part as the interface name
-// 	} else {
-// 		intName = interfaceName
-// 	}
-
-// 	debugLog("Looking for interface: package=%s, name=%s\n", pkgName, intName)
-
-// 	// Parse the package
-// 	pkgs, err := parser.ParseDir(fset, dir, nil, parser.ParseComments)
-// 	if err != nil {
-// 		return nil, "", fmt.Errorf("could not parse directory: %v", err)
-// 	}
-
-// 	var interfaceType *ast.InterfaceType
-// 	var hostPkgName string
-// 	var stdPkgs map[string]*ast.Package
-
-// 	if pkgName != "" {
-// 		// Try to find the package in standard library first
-// 		targetPkg := pkgName
-// 		if len(parts) > 2 {
-// 			// Handle cases like "net/http.File"
-// 			targetPkg = strings.Join(parts[:len(parts)-1], "/")
-// 		}
-
-// 		debugLog("Attempting to load package: %s\n", targetPkg)
-
-// 		// Try Go's standard library path
-// 		goRoot := runtime.GOROOT()
-// 		stdLibPath := filepath.Join(goRoot, "src", targetPkg)
-
-// 		debugLog("Searching in standard library path: %s\n", stdLibPath)
-
-// 		if _, err := os.Stat(stdLibPath); err == nil {
-// 			// Parse the standard library package
-// 			stdPkgs, err = parser.ParseDir(fset, stdLibPath, nil, parser.ParseComments)
-// 			if err == nil {
-// 				for stdPkgName, stdPkg := range stdPkgs {
-// 					debugLog("Found standard package: %s\n", stdPkgName)
-// 					hostPkgName = stdPkgName
-
-// 					// Look for the interface in the standard package
-// 					for _, file := range stdPkg.Files {
-// 						ast.Inspect(file, func(n ast.Node) bool {
-// 							typeSpec, ok := n.(*ast.TypeSpec)
-// 							if !ok || typeSpec.Name.Name != intName {
-// 								return true
-// 							}
-
-// 							iface, ok := typeSpec.Type.(*ast.InterfaceType)
-// 							if !ok {
-// 								return true
-// 							}
-
-// 							debugLog("Found interface %s in standard library\n", intName)
-// 							interfaceType = iface
-// 							return false
-// 						})
-
-// 						if interfaceType != nil {
-// 							break
-// 						}
-// 					}
-
-// 					if interfaceType != nil {
-// 						break
-// 					}
-// 				}
-// 			}
-// 		}
-
-// 		// If not found in standard library, try GOPATH or Go modules
-// 		if interfaceType == nil {
-// 			goPath := os.Getenv("GOPATH")
-// 			if goPath == "" {
-// 				// Default GOPATH
-// 				homeDir, _ := os.UserHomeDir()
-// 				goPath = filepath.Join(homeDir, "go")
-// 			}
-
-// 			// For third-party packages
-// 			possiblePaths := []string{
-// 				filepath.Join(goPath, "src", targetPkg),
-// 				filepath.Join(goPath, "pkg", "mod", targetPkg+"@*"), // For Go modules
-// 				filepath.Join(dir, "vendor", targetPkg),
-// 			}
-
-// 			for _, path := range possiblePaths {
-// 				debugLog("Searching path: %s\n", path)
-// 				matches, _ := filepath.Glob(path)
-
-// 				for _, match := range matches {
-// 					if stat, err := os.Stat(match); err == nil && stat.IsDir() {
-// 						debugLog("Found directory: %s\n", match)
-// 						// Parse the external package
-// 						extPkgs, err := parser.ParseDir(fset, match, nil, parser.ParseComments)
-// 						if err != nil {
-// 							debugLog("Error parsing directory: %v\n", err)
-// 							continue
-// 						}
-
-// 						// Look for the interface in the external package
-// 						for extPkgName, extPkg := range extPkgs {
-// 							debugLog("Examining package: %s\n", extPkgName)
-// 							hostPkgName = extPkgName
-
-// 							for fileName, file := range extPkg.Files {
-// 								debugLog("Examining file: %s\n", fileName)
-// 								ast.Inspect(file, func(n ast.Node) bool {
-// 									typeSpec, ok := n.(*ast.TypeSpec)
-// 									if !ok || typeSpec.Name.Name != intName {
-// 										return true
-// 									}
-
-// 									iface, ok := typeSpec.Type.(*ast.InterfaceType)
-// 									if !ok {
-// 										return true
-// 									}
-
-// 									debugLog("Found interface %s in external package\n", intName)
-// 									interfaceType = iface
-// 									return false
-// 								})
-
-// 								if interfaceType != nil {
-// 									break
-// 								}
-// 							}
-
-// 							if interfaceType != nil {
-// 								break
-// 							}
-// 						}
-
-// 						if interfaceType != nil {
-// 							break
-// 						}
-// 					}
-// 				}
-
-// 				if interfaceType != nil {
-// 					break
-// 				}
-// 			}
-// 		}
-// 	} else {
-// 		// Look for interface in local package
-// 		for _, pkg := range pkgs {
-// 			hostPkgName = pkg.Name
-
-// 			for fileName, file := range pkg.Files {
-// 				debugLog("Examining local file: %s\n", fileName)
-// 				ast.Inspect(file, func(n ast.Node) bool {
-// 					typeSpec, ok := n.(*ast.TypeSpec)
-// 					if !ok || typeSpec.Name.Name != intName {
-// 						return true
-// 					}
-
-// 					iface, ok := typeSpec.Type.(*ast.InterfaceType)
-// 					if !ok {
-// 						return true
-// 					}
-
-// 					debugLog("Found interface %s in local package\n", intName)
-// 					interfaceType = iface
-// 					return false
-// 				})
-
-// 				if interfaceType != nil {
-// 					break
-// 				}
-// 			}
-
-// 			if interfaceType != nil {
-// 				break
-// 			}
-// 		}
-// 	}
-
-// 	if interfaceType == nil {
-// 		return nil, "", fmt.Errorf("interface %s not found", interfaceName)
-// 	}
-
-// 	methods := extractMethodsFromInterface(interfaceType, fset, stdPkgs)
-
-//		return methods, hostPkgName, nil
-//	}
 func parseInterface(dir, interfaceName string) ([]Method, string, error) {
 	// Handle potentially qualified interface name (package.Interface)
 	var pkgPath, intName string
@@ -436,16 +242,22 @@ func parseInterfaceWithTypes(dir, pkgPath, intName, fullInterfaceName string) ([
 			MethodName: meth.Name(),
 		}
 
+		// collect imports from interface's methods
+		imports := make(map[string]bool)
 		// Process parameters
-		for j := 0; j < sig.Params().Len(); j++ {
+		for j := range sig.Params().Len() {
 			param := sig.Params().At(j)
-			paramTypeStr := types.TypeString(param.Type(), func(*types.Package) string { return "" })
+			for _, import_path := range param.Pkg().Imports() {
+				path := import_path.Path()
+				imports[path] = strings.Contains(param.Origin().String(), path)
+			}
+			paramTypeStr := types.TypeString(param.Type(), func(p *types.Package) string { return p.Name() })
 
 			// Handle variadic parameters
 			if sig.Variadic() && j == sig.Params().Len()-1 {
 				slice, ok := param.Type().(*types.Slice)
 				if ok {
-					elemTypeStr := types.TypeString(slice.Elem(), func(*types.Package) string { return "" })
+					elemTypeStr := types.TypeString(slice.Elem(), func(p *types.Package) string { return "" })
 					paramTypeStr = "..." + elemTypeStr
 				}
 			}
@@ -460,9 +272,14 @@ func parseInterfaceWithTypes(dir, pkgPath, intName, fullInterfaceName string) ([
 		}
 
 		// Process return values
-		for j := 0; j < sig.Results().Len(); j++ {
+		for j := range sig.Results().Len() {
 			result := sig.Results().At(j)
-			resultTypeStr := types.TypeString(result.Type(), func(*types.Package) string { return "" })
+			for _, import_path := range result.Pkg().Imports() {
+				path := import_path.Path()
+				imports[path] = strings.Contains(result.Origin().String(), path)
+			}
+
+			resultTypeStr := types.TypeString(result.Type(), func(p *types.Package) string { return p.Name() })
 
 			resultName := result.Name()
 			if resultName == "" {
@@ -471,6 +288,8 @@ func parseInterfaceWithTypes(dir, pkgPath, intName, fullInterfaceName string) ([
 			} else {
 				method.Results = append(method.Results, fmt.Sprintf("%s %s", resultName, resultTypeStr))
 			}
+
+			method.Imports = imports
 		}
 
 		methods = append(methods, method)
@@ -945,6 +764,12 @@ func (g *Generator) formatMethodResults(results []string) string {
 const tmpl = `// Code generated by duck-impl; DO NOT EDIT.
 
 package {{.PackageName}}
+
+import (
+{{- range .Imports}}
+	"{{.}}"
+{{- end}}
+)
 
 type _{{clean .InterfaceName}}_ struct {
 {{- range .Methods}}
